@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl-with-vqc"
+version = "0.0.1"
+description = "Reinforcement learning algorithms with variational quantum circuits"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Enric Ribera Borrell", email = "ribera.borrell@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "jax",
+    "gymnax==1.0.0",
+    "pennylane",
+    "matplotlib",
+    "jupyterlab",
+    "jumanji",
+]
+
+[project.urls]
+Homepage = "https://github.com/riberaborrell/rl-with-vqc"
+"Bug Tracker" = "https://github.com/riberaborrell/rl-with-vqc/issues"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
