@@ -1,9 +1,10 @@
 from functools import partial
 from dataclasses import dataclass
+
 import tyro
 import jax
 import jax.numpy as jnp
-import Gridworld
+from frozenlake.env import FrozenLake
 
 @dataclass
 class Args:
@@ -11,10 +12,14 @@ class Args:
 
     seed: int = 1
     """seed of the experiment"""
+    max_episode_steps: int = 100
+    """the number of steps after which an episode is truncated"""
     num_steps: int = 100
-    """number of time steps of the rollout"""
+    """the number of time steps of the rollout"""
     batch_size: int = 1024
     """number of trajectories to run in parallel"""
+    render: bool = False
+    """if toggled, save the animation of the simulated episode as a gif in data/Frozenlake"""
 
 
 def rollout(env, num_actions, key_input, num_steps=100):
@@ -37,7 +42,7 @@ def rollout(env, num_actions, key_input, num_steps=100):
             lambda r, s: jnp.where(done, r, s), reset_state, next_state
         )
         carry = (carry_state, key)
-        return carry, (state.elf_position, action, timestep.reward, next_state.elf_position, done)
+        return carry, (state.player_position, action, timestep.reward, next_state.player_position, done)
 
     # Scan over episode step loop
     _, scan_out = jax.lax.scan(
@@ -55,7 +60,7 @@ def main():
     args = tyro.cli(Args)
 
     # Make environment
-    env = Gridworld.Frozenlake()
+    env = FrozenLake(time_limit=args.max_episode_steps)
 
     # initialize jax key
     key = jax.random.key(args.seed)
