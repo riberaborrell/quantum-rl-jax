@@ -1,0 +1,87 @@
+import os
+from dataclasses import dataclass
+
+import tyro
+import jax
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+from frozenlake.env import FrozenLake
+from frozenlake.viewer import FrozenLakeViewer
+
+from algorithms.dqn_frozen_lake import ENV_NAME, ALGORITHM_NAME, get_obs, load_q_value
+from utils.path import get_algorithm_dir_path
+
+@dataclass
+class Args:
+    """ set rollout parameters of the trained (greedy) policy"""
+
+    seed: int = 1
+    """seed of the experiment"""
+    num_steps: int = 100
+    """number of time steps of the rollout"""
+    render: bool = False
+    """if toggled, save the animation of the simulated episode as a gif in data/FrozenLake/dqn"""
+
+
+# jumanji's env.reset(key) returns (state, timestep), and env.step(state, action) takes no key. Reward comes from timestep.reward and done from timestep.last()
+def rollout(env, q_network, q_params, key, num_steps=100):
+
+    state_seq, reward_seq = [], []
+
+    # reset environment
+    key, key_reset = jax.random.split(key, 2)
+    state, timestep = env.reset(key_reset)
+
+    for _ in range(num_steps):
+        state_seq.append(state)
+
+        # greedy action w.r.t. the trained q-value network
+        action = q_network.apply(q_params, get_obs(env, state)).argmax()
+
+        # make step
+        state, timestep = env.step(state, action)
+        reward_seq.append(timestep.reward)
+
+        # break if done
+        if timestep.last():
+            break
+
+    # keep the final state so that the whole episode can be visualized
+    state_seq.append(state)
+
+    return state_seq, reward_seq
+
+def main():
+
+    # load arguments
+    args = tyro.cli(Args)
+
+    # Make environment
+    env = FrozenLake()
+
+    # load trained q-value network
+    q_network, q_params = load_q_value(env)
+
+    # initialize jax key
+    key = jax.random.key(args.seed)
+
+    # run rollout
+    state_seq, reward_seq = rollout(env, q_network, q_params, key, args.num_steps)
+
+    # compute cumulative rewards
+    cum_rewards = jnp.cumsum(jnp.array(reward_seq))
+
+    print(f"Trajectory's length: {len(reward_seq)}")
+    print(f"Cumulative rewards: {cum_rewards[-1]}")
+
+    # visualize episode
+    if args.render:
+        file_path = os.path.join(
+            get_algorithm_dir_path(ENV_NAME, ALGORITHM_NAME),
+            f"trained_policy_seed{args.seed}.gif",
+        )
+        viewer = FrozenLakeViewer("Frozen Lake")
+        viewer.animate(state_seq, interval=200, save_path=file_path)
+
+if __name__ == '__main__':
+    main()
