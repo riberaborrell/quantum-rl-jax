@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from frozenlake.env import FrozenLake
 from frozenlake.viewer import FrozenLakeViewer
 
-from algorithms.dqn_frozen_lake import ENV_NAME, ALGORITHM_NAME, get_obs, load_q_value
+from algorithms.dqn_frozen_lake import ENV_NAME, ALGORITHM_NAME, get_obs, load_q_network
 from utils.path import get_algorithm_dir_path
 
 @dataclass
@@ -17,8 +17,8 @@ class Args:
 
     seed: int = 1
     """seed of the experiment"""
-    num_steps: int = 100
-    """number of time steps of the rollout"""
+    max_episode_steps: int = 100
+    """the number of steps after which an episode is truncated"""
     render: bool = False
     """if toggled, save the animation of the simulated episode as a gif in data/FrozenLake/dqn"""
 
@@ -57,16 +57,16 @@ def main():
     args = tyro.cli(Args)
 
     # Make environment
-    env = FrozenLake()
+    env = FrozenLake(time_limit=args.max_episode_steps)
 
     # load trained q-value network
-    q_network, q_params = load_q_value(env)
+    q_network, q_params = load_q_network(env)
 
     # initialize jax key
     key = jax.random.key(args.seed)
 
     # run rollout
-    state_seq, reward_seq = rollout(env, q_network, q_params, key, args.num_steps)
+    state_seq, reward_seq = rollout(env, q_network, q_params, key, args.max_episode_steps)
 
     # compute cumulative rewards
     cum_rewards = jnp.cumsum(jnp.array(reward_seq))

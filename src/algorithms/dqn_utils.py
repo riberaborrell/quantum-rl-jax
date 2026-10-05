@@ -4,9 +4,10 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Literal
 
-import flax
+import jax
 import numpy as np
 import optax
+import orbax.checkpoint as ocp
 
 from utils.path import get_q_value_dir_path
 
@@ -72,13 +73,12 @@ EPSILON_SCHEDULES: dict[str, Callable[[float, float, int, int], float]] = {
 }
 
 
-def save_q_value(q_params: Any, args: Any, env_name: str, algorithm_name: str) -> None:
-    """Save the q-value parameters and the (dataclass) arguments of the run in data/[env]/[algorithm]/q-value."""
+def save_q_value(q_params: Any, env_name: str, algorithm_name: str) -> None:
+    """Save the q-value parameters in data/[env]/[algorithm]/q-value."""
     dir_path = get_q_value_dir_path(env_name, algorithm_name)
-    with open(os.path.join(dir_path, "params.msgpack"), "wb") as f:
-        f.write(flax.serialization.to_bytes(q_params))
-    with open(os.path.join(dir_path, "args.json"), "w") as f:
-        json.dump(asdict(args), f, indent=4)
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(os.path.join(dir_path, "params"), q_params, force=True)
+    checkpointer.wait_until_finished()  # orbax saves asynchronously by default
     print(f"q-value saved to {dir_path}")
 
 
@@ -86,8 +86,8 @@ def load_q_value(q_params: Any, env_name: str, algorithm_name: str) -> Any:
     """Load the q-value parameters saved by `save_q_value`.
 
     Args:
-        q_params: Parameters with the same structure as the saved ones, e.g. a fresh initialization.
-            Their values are discarded.
+        q_params: Pytree with the structure, shapes and dtypes of the saved parameters. Only these are
+            used, so an abstract pytree from `jax.eval_shape` is enough and avoids computing an init.
         env_name: Name of the environment the parameters were trained on.
         algorithm_name: Name of the algorithm that trained the parameters.
 
@@ -95,6 +95,5 @@ def load_q_value(q_params: Any, env_name: str, algorithm_name: str) -> Any:
         The saved parameters.
     """
     dir_path = get_q_value_dir_path(env_name, algorithm_name)
-    with open(os.path.join(dir_path, "params.msgpack"), "rb") as f:
-        return flax.serialization.from_bytes(q_params, f.read())
-
+    abstract_params = jax.tree.map(lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), q_params)
+    return ocp.StandardCheckpointer().restore(os.path.join(dir_path, "params"), abstract_params)

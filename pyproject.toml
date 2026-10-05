@@ -21,6 +21,7 @@ dependencies = [
     "jax",
     "flax",
     "optax",
+    "orbax-checkpoint",
     "gymnax==1.0.0",
     "jumanji",
     "pennylane",

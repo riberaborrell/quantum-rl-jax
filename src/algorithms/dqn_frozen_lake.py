@@ -92,7 +92,8 @@ def load_q_network(env):
     q_network = QNetwork(action_dim=env.action_spec().num_values)
     key = jax.random.key(0)
     env_state, _ = env.reset(key)
-    q_params = q_network.init(key, get_obs(env, env_state))  # only provides the parameters structure
+    # eval_shape only provides the structure, shapes and dtypes to restore into, without computing the init
+    q_params = jax.eval_shape(lambda: q_network.init(key, get_obs(env, env_state)))
     return q_network, load_q_value(q_params, ENV_NAME, ALGORITHM_NAME)
 
 
@@ -221,7 +222,7 @@ def main():
                 )
 
     # save q-value network
-    save_q_value(q_state.params, args, ENV_NAME, ALGORITHM_NAME)
+    save_q_value(q_state.params, ENV_NAME, ALGORITHM_NAME)
     return q_state, episodic_returns
 
 

@@ -65,7 +65,7 @@ def main():
     key = jax.random.key(args.seed)
 
     # run rollout
-    state_seq, reward_seq = rollout(env, key, args.num_steps)
+    state_seq, reward_seq = rollout(env, key, args.max_episode_steps)
 
     # compute cumulative rewards
     cum_rewards = jnp.cumsum(jnp.array(reward_seq))
