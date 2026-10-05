@@ -16,12 +16,15 @@ classifiers = [
 ]
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "jax",
-    "gymnax==1.0.0",
-    "pennylane",
+    "tyro",
     "matplotlib",
-    "jupyterlab",
+    "jax",
+    "flax",
+    "optax",
+    "gymnax==1.0.0",
     "jumanji",
+    "pennylane",
+    "jupyterlab",
 ]
 
 [project.urls]

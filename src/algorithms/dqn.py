@@ -4,9 +4,9 @@ import tyro
 import time
 from collections import deque
 from dataclasses import dataclass
+from typing import Literal
 
 import flax
-import flax.linen as nn
 import gymnax
 import jax
 import jax.numpy as jnp
@@ -14,17 +14,30 @@ import numpy as np
 import optax
 from flax.training.train_state import TrainState
 
+from algorithms.dqn_utils import EPSILON_SCHEDULES, ReplayBuffer, make_optimizer
+from models.neural_networks import QNetwork
+
 
 @dataclass
 class Args:
     seed: int = 1
     """seed of the experiment"""
+
+    # gymnax env parameters
     env_id: str = "CartPole-v1"
     """the id of the gymnax environment"""
+
+    # neural network architecture and optimizer
+    optimizer: Literal["sgd", "adam", "rmsprop"] = "adam"
+    """the optimizer of the neural network parameters"""
+    learning_rate: float = 2.5e-4
+    """the learning rate of the chosen optimizer"""
+
+    # dqn parameters
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
-    """the learning rate of the optimizer"""
+    max_episodes: int | None = None
+    """if set, stop training after this number of episodes (in addition to `total_timesteps`)"""
     buffer_size: int = 10000
     """the replay memory buffer size"""
     gamma: float = 0.99
@@ -35,12 +48,6 @@ class Args:
     """the timesteps it takes to update the target network"""
     batch_size: int = 128
     """the batch size of sample from the reply memory"""
-    start_e: float = 1
-    """the starting epsilon for exploration"""
-    end_e: float = 0.05
-    """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.5
-    """the fraction of `total-timesteps` it takes from start-e to go end-e"""
     learning_starts: int = 10000
     """timestep to start learning"""
     train_frequency: int = 10
@@ -48,61 +55,20 @@ class Args:
     stats_window: int = 100
     """the number of recent episodes used for the running average of return and length"""
 
-
-class QNetwork(nn.Module):
-    action_dim: int
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray):
-        x = nn.Dense(120)(x)
-        x = nn.relu(x)
-        x = nn.Dense(84)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.action_dim)(x)
-        return x
+    # exploration
+    start_e: float = 1
+    """the starting epsilon for exploration"""
+    end_e: float = 0.05
+    """the ending epsilon for exploration"""
+    exploration_fraction: float = 0.5
+    """the fraction of `total-timesteps` it takes from start-e to go end-e"""
+    epsilon_schedule: Literal["constant", "linear", "exponential"] = "linear"
+    """"linear" and "exponential": epsilon decays from `start_e` to `end_e` over the first
+    `exploration_fraction` of the timesteps; "constant": epsilon stays at `start_e`"""
 
 
 class TrainState(TrainState):
     target_params: flax.core.FrozenDict
-
-
-class ReplayBuffer:
-    """Minimal circular replay buffer stored in numpy arrays."""
-
-    def __init__(self, buffer_size, obs_shape):
-        self.buffer_size = buffer_size
-        self.observations = np.zeros((buffer_size, *obs_shape), dtype=np.float32)
-        self.next_observations = np.zeros((buffer_size, *obs_shape), dtype=np.float32)
-        self.actions = np.zeros(buffer_size, dtype=np.int32)
-        self.rewards = np.zeros(buffer_size, dtype=np.float32)
-        self.dones = np.zeros(buffer_size, dtype=np.float32)
-        self.pos = 0
-        self.full = False
-
-    def add(self, obs, next_obs, action, reward, done):
-        self.observations[self.pos] = obs
-        self.next_observations[self.pos] = next_obs
-        self.actions[self.pos] = action
-        self.rewards[self.pos] = reward
-        self.dones[self.pos] = done
-        self.pos = (self.pos + 1) % self.buffer_size
-        self.full = self.full or self.pos == 0
-
-    def sample(self, batch_size, rng):
-        upper_bound = self.buffer_size if self.full else self.pos
-        idx = rng.integers(0, upper_bound, size=batch_size)
-        return (
-            self.observations[idx],
-            self.actions[idx],
-            self.next_observations[idx],
-            self.rewards[idx],
-            self.dones[idx],
-        )
-
-
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
 
 
 def main():
@@ -130,7 +96,7 @@ def main():
         apply_fn=q_network.apply,
         params=q_params,
         target_params=q_params,
-        tx=optax.adam(learning_rate=args.learning_rate),
+        tx=make_optimizer(args.optimizer, args.learning_rate),
     )
 
     # make replay buffer
@@ -172,11 +138,13 @@ def main():
     episodic_return, episodic_length = 0.0, 0
     recent_returns = deque(maxlen=args.stats_window)
     recent_lengths = deque(maxlen=args.stats_window)
+    print(f"{'global_step':>11} | {'episode':>7} | {'ep_return':>9} | {'ep_length':>9} | {'avg_return':>10} | {'avg_length':>10} | {'epsilon':>7}")
 
     # start training
     for global_step in range(args.total_timesteps):
-        epsilon = linear_schedule(args.start_e, args.end_e,
-                                  args.exploration_fraction * args.total_timesteps, global_step)
+        epsilon = EPSILON_SCHEDULES[args.epsilon_schedule](
+            args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step
+        )
         key, step_key = jax.random.split(key)
         action, next_obs, env_state, reward, terminated, truncated, final_obs = jax.device_get(
             act_and_step(q_state.params, obs, env_state, epsilon, step_key)
@@ -192,11 +160,12 @@ def main():
             recent_lengths.append(episodic_length)
             if len(episodic_returns) % 100 == 0:
                 print(
-                    f"global_step={global_step}, episode={episode_counter}, "
-                    f"episodic_return={episodic_return}, episodic_length={episodic_length}, "
-                    f"avg_return={np.mean(recent_returns):.2f}, avg_length={np.mean(recent_lengths):.2f}"
-            )
+                    f"{global_step:>11d} | {len(episodic_returns):>7d} | {episodic_return:>+9.2f} | "
+                    f"{episodic_length:>9d} | {np.mean(recent_returns):>+10.2f} | {np.mean(recent_lengths):>10.2f} | {epsilon:>7.3f}"
+                )
             episodic_return, episodic_length = 0.0, 0
+            if episode_counter == args.max_episodes:
+                break
 
         # save data to replay buffer; gymnax auto-resets, so the true next obs is `final_obs`
         rb.add(obs, final_obs, action, reward, terminated)

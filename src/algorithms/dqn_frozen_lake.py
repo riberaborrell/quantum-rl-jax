@@ -1,13 +1,11 @@
 # DQN for the jumanji Frozenlake environment, adapted from dqn.py (gymnax version)
-import json
-import os
 import sys
 import time
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from typing import Literal
 
 import flax
-import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +15,8 @@ from flax.training.train_state import TrainState
 
 from frozenlake import FrozenLake
 
-from utils.path import get_q_value_dir_path
+from algorithms.dqn_utils import ReplayBuffer, linear_schedule, load_q_value, make_optimizer, save_q_value
+from models.neural_networks import QNetwork
 
 ENV_NAME = "FrozenLake"
 ALGORITHM_NAME = "dqn"
@@ -28,30 +27,37 @@ class Args:
     seed: int = 1
     """seed of the experiment"""
 
-    #map_name: str = "4x4"
-    #"""the map of the Frozen Lake, one of MAPS ("4x4" or "8x8")"""
+    # frozenlake env parameters
+    goal_reward: float = 1.0
+    """reward for reaching the goal"""
+    hole_reward: float = -0.2
+    """reward for falling into a hole"""
+    step_reward: float = -0.01
+    """reward for any other step"""
     max_episode_steps: int = 100
     """the number of steps after which an episode is truncated"""
-    total_timesteps: int = 100000
+
+    # neural network architecture and optimizer
+    optimizer: Literal["sgd", "adam", "rmsprop"] = "adam"
+    """the optimizer of the neural network parameters"""
+    learning_rate: float = 5e-4
+    """the learning rate of the chosen optimizer"""
+
+    # dqn parameters
+    total_timesteps: int | None = 100000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
-    """the learning rate of the optimizer"""
-    buffer_size: int = 10000
+    max_episodes: int | None = 1000
+    """if set, stop training after this number of episodes (in addition to `total_timesteps`)"""
+    buffer_size: int = 1000
     """the replay memory buffer size"""
-    gamma: float = 0.99
+    gamma: float = 0.95
     """the discount factor gamma"""
     tau: float = 1.0
     """the target network update rate"""
-    target_network_frequency: int = 500
+    target_network_frequency: int = 10
     """the timesteps it takes to update the target network"""
-    batch_size: int = 128
+    batch_size: int = 32
     """the batch size of sample from the reply memory"""
-    start_e: float = 1
-    """the starting epsilon for exploration"""
-    end_e: float = 0.05
-    """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.5
-    """the fraction of `total-timesteps` it takes from start-e to go end-e"""
     learning_starts: int = 1000
     """timestep to start learning"""
     train_frequency: int = 10
@@ -59,56 +65,20 @@ class Args:
     stats_window: int = 100
     """the number of recent episodes used for the running average of return and length"""
 
-
-class QNetwork(nn.Module):
-    action_dim: int
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray):
-        x = nn.Dense(120)(x)
-        x = nn.relu(x)
-        x = nn.Dense(84)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.action_dim)(x)
-        return x
+    # exploration
+    start_e: float = 0.999
+    """the starting epsilon for exploration"""
+    end_e: float = 0.01
+    """the ending epsilon for exploration"""
+    exploration_fraction: float = 0.5
+    """the fraction of `total-timesteps` it takes from start-e to go end-e"""
+    epsilon_schedule: Literal["constant", "linear", "exponential"] = "linear"
+    """"linear" and "exponential": epsilon decays from `start_e` to `end_e` over the first
+    `exploration_fraction` of the timesteps; "constant": epsilon stays at `start_e`"""
 
 
 class TrainState(TrainState):
     target_params: flax.core.FrozenDict
-
-
-class ReplayBuffer:
-    """Minimal circular replay buffer stored in numpy arrays."""
-
-    def __init__(self, buffer_size, obs_shape):
-        self.buffer_size = buffer_size
-        self.observations = np.zeros((buffer_size, *obs_shape), dtype=np.float32)
-        self.next_observations = np.zeros((buffer_size, *obs_shape), dtype=np.float32)
-        self.actions = np.zeros(buffer_size, dtype=np.int32)
-        self.rewards = np.zeros(buffer_size, dtype=np.float32)
-        self.dones = np.zeros(buffer_size, dtype=np.float32)
-        self.pos = 0
-        self.full = False
-
-    def add(self, obs, next_obs, action, reward, done):
-        self.observations[self.pos] = obs
-        self.next_observations[self.pos] = next_obs
-        self.actions[self.pos] = action
-        self.rewards[self.pos] = reward
-        self.dones[self.pos] = done
-        self.pos = (self.pos + 1) % self.buffer_size
-        self.full = self.full or self.pos == 0
-
-    def sample(self, batch_size, rng):
-        upper_bound = self.buffer_size if self.full else self.pos
-        idx = rng.integers(0, upper_bound, size=batch_size)
-        return (
-            self.observations[idx],
-            self.actions[idx],
-            self.next_observations[idx],
-            self.rewards[idx],
-            self.dones[idx],
-        )
 
 
 def get_obs(env, env_state):
@@ -117,32 +87,13 @@ def get_obs(env, env_state):
     return jax.nn.one_hot(index, env.num_rows * env.num_cols)
 
 
-def save_q_value(q_params, args):
-    """Save the q-value network parameters and the arguments of the run in data/[env]/[algorithm]/q-value."""
-    dir_path = get_q_value_dir_path(ENV_NAME, ALGORITHM_NAME)
-    with open(os.path.join(dir_path, "params.msgpack"), "wb") as f:
-        f.write(flax.serialization.to_bytes(q_params))
-    with open(os.path.join(dir_path, "args.json"), "w") as f:
-        json.dump(asdict(args), f, indent=4)
-    print(f"q-value network saved to {dir_path}")
-
-
-def load_q_value(env):
-    """Load the q-value network parameters saved by `save_q_value`."""
-    dir_path = get_q_value_dir_path(ENV_NAME, ALGORITHM_NAME)
+def load_q_network(env):
+    """Load the q-value network and the trained parameters saved by `save_q_value`."""
     q_network = QNetwork(action_dim=env.action_spec().num_values)
-    # the initialization only provides the parameters structure, they are overwritten below
     key = jax.random.key(0)
     env_state, _ = env.reset(key)
-    q_params = q_network.init(key, get_obs(env, env_state))
-    with open(os.path.join(dir_path, "params.msgpack"), "rb") as f:
-        q_params = flax.serialization.from_bytes(q_params, f.read())
-    return q_network, q_params
-
-
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
+    q_params = q_network.init(key, get_obs(env, env_state))  # only provides the parameters structure
+    return q_network, load_q_value(q_params, ENV_NAME, ALGORITHM_NAME)
 
 
 def main():
@@ -156,7 +107,12 @@ def main():
     key, q_key, reset_key = jax.random.split(key, 3)
 
     # make environment
-    env = FrozenLake(time_limit=args.max_episode_steps)
+    env = FrozenLake(
+        goal_reward=args.goal_reward,
+        hole_reward=args.hole_reward,
+        step_reward=args.step_reward,
+        time_limit=args.max_episode_steps,
+    )
     num_actions = env.action_spec().num_values
 
     # reset environment
@@ -170,7 +126,7 @@ def main():
         apply_fn=q_network.apply,
         params=q_params,
         target_params=q_params,
-        tx=optax.adam(learning_rate=args.learning_rate),
+        tx=make_optimizer(args.optimizer, args.learning_rate),
     )
 
     # make replay buffer
@@ -220,6 +176,7 @@ def main():
     episodic_return, episodic_length = 0.0, 0
     recent_returns = deque(maxlen=args.stats_window)
     recent_lengths = deque(maxlen=args.stats_window)
+    print(f"{'global_step':>11} | {'episode':>7} | {'ep_return':>9} | {'ep_length':>9} | {'avg_return':>10} | {'avg_length':>10} | {'epsilon':>7}")
 
     # start training
     for global_step in range(args.total_timesteps):
@@ -239,16 +196,17 @@ def main():
             recent_lengths.append(episodic_length)
             if len(episodic_returns) % 100 == 0:
                 print(
-                    f"global_step={global_step}, episode={len(episodic_returns)}, "
-                    f"episodic_return={episodic_return}, episodic_length={episodic_length}, "
-                    f"avg_return={np.mean(recent_returns):.2f}, avg_length={np.mean(recent_lengths):.2f}"
+                    f"{global_step:>11d} | {len(episodic_returns):>7d} | {episodic_return:>+9.2f} | "
+                    f"{episodic_length:>9d} | {np.mean(recent_returns):>+10.2f} | {np.mean(recent_lengths):>10.2f} | {epsilon:>7.3f}"
                 )
             episodic_return, episodic_length = 0.0, 0
+            if len(episodic_returns) == args.max_episodes:
+                break
 
         # save data to replay buffer; the true next obs is `final_obs` since we auto-reset
         rb.add(obs, final_obs, action, reward, terminated)
 
-        # CRUCIAL step easy to overlook
+        # update observation. CRUCIAL step!
         obs = next_obs
 
         # training
@@ -262,10 +220,8 @@ def main():
                     target_params=optax.incremental_update(q_state.params, q_state.target_params, args.tau)
                 )
 
-    print(f"SPS={int(args.total_timesteps / (time.time() - start_time))}")
-
     # save q-value network
-    save_q_value(q_state.params, args)
+    save_q_value(q_state.params, args, ENV_NAME, ALGORITHM_NAME)
     return q_state, episodic_returns
 
 
