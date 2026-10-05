@@ -2,6 +2,7 @@
 import sys
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,7 +16,7 @@ from flax.training.train_state import TrainState
 
 from frozenlake import FrozenLake
 
-from algorithms.dqn_utils import ReplayBuffer, linear_schedule, load_q_value, make_optimizer, save_q_value
+from algorithms.dqn_utils import ReplayBuffer, load_q_value, make_epsilon_schedule, make_optimizer, save_q_value
 from models.neural_networks import QNetwork
 
 ENV_NAME = "FrozenLake"
@@ -38,13 +39,17 @@ class Args:
     """the number of steps after which an episode is truncated"""
 
     # neural network architecture and optimizer
+    hidden_dims: Sequence[int] = (32, 16)
+    """the dimensions of the hidden layers"""
     optimizer: Literal["sgd", "adam", "rmsprop"] = "adam"
     """the optimizer of the neural network parameters"""
     learning_rate: float = 5e-4
     """the learning rate of the chosen optimizer"""
+    clip_grad_norm: float | None = None
+    """if set, the maximum global norm of the gradients; larger gradients are rescaled to this norm"""
 
     # dqn parameters
-    total_timesteps: int | None = 100000
+    total_timesteps: int | None = 20000
     """total timesteps of the experiments"""
     max_episodes: int | None = 1000
     """if set, stop training after this number of episodes (in addition to `total_timesteps`)"""
@@ -54,7 +59,7 @@ class Args:
     """the discount factor gamma"""
     tau: float = 1.0
     """the target network update rate"""
-    target_network_frequency: int = 10
+    target_network_frequency: int = 1
     """the timesteps it takes to update the target network"""
     batch_size: int = 32
     """the batch size of sample from the reply memory"""
@@ -62,7 +67,7 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 10
     """the frequency of training"""
-    stats_window: int = 100
+    stats_window: int = 50
     """the number of recent episodes used for the running average of return and length"""
 
     # exploration
@@ -121,13 +126,13 @@ def main():
     obs = get_obs(env, env_state)
 
     # define neural network to approximate the q-value function
-    q_network = QNetwork(action_dim=num_actions)
+    q_network = QNetwork(action_dim=num_actions, hidden_dims=args.hidden_dims)
     q_params = q_network.init(q_key, obs)
     q_state = TrainState.create(
         apply_fn=q_network.apply,
         params=q_params,
         target_params=q_params,
-        tx=make_optimizer(args.optimizer, args.learning_rate),
+        tx=make_optimizer(args.optimizer, args.learning_rate, args.clip_grad_norm),
     )
 
     # make replay buffer
@@ -180,9 +185,11 @@ def main():
     print(f"{'global_step':>11} | {'episode':>7} | {'ep_return':>9} | {'ep_length':>9} | {'avg_return':>10} | {'avg_length':>10} | {'epsilon':>7}")
 
     # start training
+    epsilon_schedule = make_epsilon_schedule(
+        args.epsilon_schedule, args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps
+    )
     for global_step in range(args.total_timesteps):
-        epsilon = linear_schedule(args.start_e, args.end_e,
-                                  args.exploration_fraction * args.total_timesteps, global_step)
+        epsilon = float(epsilon_schedule(global_step))
         key, step_key = jax.random.split(key)
         action, next_obs, env_state, reward, terminated, truncated, final_obs = jax.device_get(
             act_and_step(q_state.params, obs, env_state, epsilon, step_key)
@@ -195,7 +202,7 @@ def main():
             episodic_returns.append(episodic_return)
             recent_returns.append(episodic_return)
             recent_lengths.append(episodic_length)
-            if len(episodic_returns) % 100 == 0:
+            if len(episodic_returns) % 10 == 0:
                 print(
                     f"{global_step:>11d} | {len(episodic_returns):>7d} | {episodic_return:>+9.2f} | "
                     f"{episodic_length:>9d} | {np.mean(recent_returns):>+10.2f} | {np.mean(recent_lengths):>10.2f} | {epsilon:>7.3f}"

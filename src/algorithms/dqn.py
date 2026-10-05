@@ -14,7 +14,7 @@ import numpy as np
 import optax
 from flax.training.train_state import TrainState
 
-from algorithms.dqn_utils import EPSILON_SCHEDULES, ReplayBuffer, make_optimizer
+from algorithms.dqn_utils import ReplayBuffer, make_epsilon_schedule, make_optimizer
 from models.neural_networks import QNetwork
 
 
@@ -32,6 +32,8 @@ class Args:
     """the optimizer of the neural network parameters"""
     learning_rate: float = 2.5e-4
     """the learning rate of the chosen optimizer"""
+    clip_grad_norm: float | None = None
+    """if set, the maximum global norm of the gradients; larger gradients are rescaled to this norm"""
 
     # dqn parameters
     total_timesteps: int = 500000
@@ -96,7 +98,7 @@ def main():
         apply_fn=q_network.apply,
         params=q_params,
         target_params=q_params,
-        tx=make_optimizer(args.optimizer, args.learning_rate),
+        tx=make_optimizer(args.optimizer, args.learning_rate, args.clip_grad_norm),
     )
 
     # make replay buffer
@@ -141,10 +143,11 @@ def main():
     print(f"{'global_step':>11} | {'episode':>7} | {'ep_return':>9} | {'ep_length':>9} | {'avg_return':>10} | {'avg_length':>10} | {'epsilon':>7}")
 
     # start training
+    epsilon_schedule = make_epsilon_schedule(
+        args.epsilon_schedule, args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps
+    )
     for global_step in range(args.total_timesteps):
-        epsilon = EPSILON_SCHEDULES[args.epsilon_schedule](
-            args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step
-        )
+        epsilon = float(epsilon_schedule(global_step))
         key, step_key = jax.random.split(key)
         action, next_obs, env_state, reward, terminated, truncated, final_obs = jax.device_get(
             act_and_step(q_state.params, obs, env_state, epsilon, step_key)

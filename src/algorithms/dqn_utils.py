@@ -1,7 +1,4 @@
-import json
 import os
-from collections.abc import Callable
-from dataclasses import asdict
 from typing import Any, Literal
 
 import jax
@@ -46,31 +43,45 @@ class ReplayBuffer:
         )
 
 
-def make_optimizer(name: Literal["sgd", "adam", "rmsprop"], learning_rate: float) -> optax.GradientTransformation:
-    """Optax optimizer with the given name and learning rate."""
-    return {"sgd": optax.sgd, "adam": optax.adam, "rmsprop": optax.rmsprop}[name](learning_rate)
+def make_optimizer(
+    name: Literal["sgd", "adam", "rmsprop"],
+    learning_rate: float,
+    clip_grad_norm: float | None = None,
+) -> optax.GradientTransformation:
+    """Optax optimizer with the given name and learning rate.
+
+    Args:
+        name: Name of the optimizer.
+        learning_rate: Learning rate of the optimizer.
+        clip_grad_norm: If given, the gradients are rescaled before the optimizer update so that their
+            global norm (over all parameters) is at most this value; smaller gradients are left unchanged.
+    """
+    tx = {"sgd": optax.sgd, "adam": optax.adam, "rmsprop": optax.rmsprop}[name](learning_rate)
+    return tx if clip_grad_norm is None else optax.chain(optax.clip_by_global_norm(clip_grad_norm), tx)
 
 
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
+def make_epsilon_schedule(
+    name: Literal["constant", "linear", "exponential"],
+    start_e: float,
+    end_e: float,
+    duration: float,
+) -> optax.Schedule:
+    """Epsilon as a function of the timestep.
 
-
-def exponential_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Geometric decay from `start_e` at t=0 to `end_e` at t=`duration`, constant afterwards."""
-    return max(start_e * (end_e / start_e) ** (t / duration), end_e)
-
-
-def constant_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Constant `start_e`; same signature as the decaying schedules so they are interchangeable."""
-    return start_e
-
-
-EPSILON_SCHEDULES: dict[str, Callable[[float, float, int, int], float]] = {
-    "constant": constant_schedule,
-    "linear": linear_schedule,
-    "exponential": exponential_schedule,
-}
+    Args:
+        name: "constant" stays at `start_e`; "linear" and "exponential" (geometric) decay from `start_e`
+            at t=0 to `end_e` at t=`duration`, and stay at `end_e` afterwards.
+        start_e: Epsilon at t=0.
+        end_e: Final epsilon of the decaying schedules.
+        duration: Number of timesteps of the decay.
+    """
+    if name == "constant":
+        schedule = optax.constant_schedule(start_e)
+    elif name == "linear":
+        schedule = optax.linear_schedule(start_e, end_e, duration)
+    else:
+        schedule = optax.exponential_decay(start_e, duration, end_e / start_e, end_value=end_e)
+    return jax.jit(schedule)
 
 
 def save_q_value(q_params: Any, env_name: str, algorithm_name: str) -> None:
