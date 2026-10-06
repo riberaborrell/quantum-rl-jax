@@ -20,8 +20,8 @@ class Args:
     """seed of the experiment"""
     max_episode_steps: int = 100
     """the number of steps after which an episode is truncated"""
-    algorithm_name: Literal["dqn", "vqdqn"] = "dqn"
-    """the algorithm that trained the policy: dqn (neural network) or vqdqn (variational quantum circuit)"""
+    algorithm_name: Literal["dqn", "dqn_vqc"] = "dqn"
+    """the algorithm that trained the policy: dqn (neural network) or dqn_vqc (variational quantum circuit)"""
     render: bool = False
     """if toggled, save the animation of the simulated episode as a gif in data/FrozenLake/[algorithm_name]"""
 
@@ -54,7 +54,7 @@ def rollout(env, q_values, q_params, get_obs, key, num_steps=100):
 
     return state_seq, reward_seq
 
-ALGORITHM_MODULES = {"dqn": "algorithms.dqn_frozen_lake", "vqdqn": "algorithms.vqdqn_frozen_lake"}
+ALGORITHM_MODULES = {"dqn": "algorithms.dqn_frozen_lake", "dqn_vqc": "algorithms.dqn_vqc_frozen_lake"}
 
 
 def main():
@@ -62,7 +62,7 @@ def main():
     # load arguments
     args = tyro.cli(Args)
 
-    # the vqdqn module enables jax x64 when imported, so import before anything creates jax arrays
+    # the dqn_vqc module enables jax x64 when imported, so import before anything creates jax arrays
     algorithm = importlib.import_module(ALGORITHM_MODULES[args.algorithm_name])
 
     # Make environment

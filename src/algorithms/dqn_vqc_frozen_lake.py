@@ -24,7 +24,7 @@ from models.var_quantum_circuits import QValueParams, init_q_value, make_q_value
 jax.config.update("jax_enable_x64", True)
 
 ENV_NAME = "FrozenLake"
-ALGORITHM_NAME = "vqdqn"
+ALGORITHM_NAME = "dqn_vqc"
 
 # 16 states are binary encoded in 4 qubits, which also gives the 4 actions
 NUM_QUBITS = 4

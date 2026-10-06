@@ -26,10 +26,13 @@ def make_q_values(
 
     @qml.qnode(device, interface="jax")
     def circuit(weights: Float[Array, "layers qubits 3"], obs: Float[Array, "qubits"]) -> list:
+
+        # data embedding
         for wire in range(num_qubits):
             qml.RX(jnp.pi * obs[wire], wires=wire)
             qml.RZ(jnp.pi * obs[wire], wires=wire)
 
+        # trainable ansatz
         for layer_weights in weights:
             for wire in range(num_qubits - 1):
                 qml.CNOT(wires=[wire, wire + 1])
