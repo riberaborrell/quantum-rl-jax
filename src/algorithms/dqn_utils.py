@@ -44,7 +44,7 @@ class ReplayBuffer:
 
 
 def make_optimizer(
-    name: Literal["sgd", "adam", "rmsprop"],
+    name: Literal["sgd", "adam"],
     learning_rate: float,
     clip_grad_norm: float | None = None,
 ) -> optax.GradientTransformation:
@@ -56,7 +56,7 @@ def make_optimizer(
         clip_grad_norm: If given, the gradients are rescaled before the optimizer update so that their
             global norm (over all parameters) is at most this value; smaller gradients are left unchanged.
     """
-    tx = {"sgd": optax.sgd, "adam": optax.adam, "rmsprop": optax.rmsprop}[name](learning_rate)
+    tx = {"sgd": optax.sgd, "adam": optax.adam}[name](learning_rate)
     return tx if clip_grad_norm is None else optax.chain(optax.clip_by_global_norm(clip_grad_norm), tx)
 
 
@@ -91,6 +91,13 @@ def save_q_value(q_params: Any, env_name: str, algorithm_name: str) -> None:
     checkpointer.save(os.path.join(dir_path, "params"), q_params, force=True)
     checkpointer.wait_until_finished()  # orbax saves asynchronously by default
     print(f"q-value saved to {dir_path}")
+
+
+def get_q_value_structure(env_name: str, algorithm_name: str) -> Any:
+    """Abstract pytree (shapes and dtypes) of the saved q-value parameters, read from the checkpoint metadata."""
+    dir_path = get_q_value_dir_path(env_name, algorithm_name)
+    metadata = ocp.StandardCheckpointer().metadata(os.path.join(dir_path, "params")).item_metadata
+    return jax.tree.map(lambda m: jax.ShapeDtypeStruct(m.shape, m.dtype), metadata)
 
 
 def load_q_value(q_params: Any, env_name: str, algorithm_name: str) -> Any:

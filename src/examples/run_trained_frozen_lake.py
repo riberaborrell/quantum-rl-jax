@@ -1,5 +1,7 @@
+import importlib
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 import tyro
 import jax
@@ -8,7 +10,6 @@ import matplotlib.pyplot as plt
 from frozenlake.env import FrozenLake
 from frozenlake.viewer import FrozenLakeViewer
 
-from algorithms.dqn_frozen_lake import ENV_NAME, ALGORITHM_NAME, get_obs, load_q_network
 from utils.path import get_algorithm_dir_path
 
 @dataclass
@@ -19,12 +20,14 @@ class Args:
     """seed of the experiment"""
     max_episode_steps: int = 100
     """the number of steps after which an episode is truncated"""
+    algorithm_name: Literal["dqn", "vqdqn"] = "dqn"
+    """the algorithm that trained the policy: dqn (neural network) or vqdqn (variational quantum circuit)"""
     render: bool = False
-    """if toggled, save the animation of the simulated episode as a gif in data/FrozenLake/dqn"""
+    """if toggled, save the animation of the simulated episode as a gif in data/FrozenLake/[algorithm_name]"""
 
 
 # jumanji's env.reset(key) returns (state, timestep), and env.step(state, action) takes no key. Reward comes from timestep.reward and done from timestep.last()
-def rollout(env, q_network, q_params, key, num_steps=100):
+def rollout(env, q_values, q_params, get_obs, key, num_steps=100):
 
     state_seq, reward_seq = [], []
 
@@ -35,8 +38,8 @@ def rollout(env, q_network, q_params, key, num_steps=100):
     for _ in range(num_steps):
         state_seq.append(state)
 
-        # greedy action w.r.t. the trained q-value network
-        action = q_network.apply(q_params, get_obs(env, state)).argmax()
+        # greedy action w.r.t. the trained q-value function
+        action = q_values(q_params, get_obs(env, state)).argmax()
 
         # make step
         state, timestep = env.step(state, action)
@@ -51,22 +54,34 @@ def rollout(env, q_network, q_params, key, num_steps=100):
 
     return state_seq, reward_seq
 
+ALGORITHM_MODULES = {"dqn": "algorithms.dqn_frozen_lake", "vqdqn": "algorithms.vqdqn_frozen_lake"}
+
+
 def main():
 
     # load arguments
     args = tyro.cli(Args)
 
+    # the vqdqn module enables jax x64 when imported, so import before anything creates jax arrays
+    algorithm = importlib.import_module(ALGORITHM_MODULES[args.algorithm_name])
+
     # Make environment
     env = FrozenLake(time_limit=args.max_episode_steps)
 
-    # load trained q-value network
-    q_network, q_params = load_q_network(env)
+    # load the trained q-value function; each algorithm has its own way of loading and encoding the state
+    if args.algorithm_name == "dqn":
+        q_network, q_params = algorithm.load_q_network(env)
+        q_values = q_network.apply
+    else:
+        q_params = algorithm.load_q_value()
+        q_values = algorithm.q_values
+    get_obs = algorithm.get_obs
 
     # initialize jax key
     key = jax.random.key(args.seed)
 
     # run rollout
-    state_seq, reward_seq = rollout(env, q_network, q_params, key, args.max_episode_steps)
+    state_seq, reward_seq = rollout(env, q_values, q_params, get_obs, key, args.max_episode_steps)
 
     # compute cumulative rewards
     cum_rewards = jnp.cumsum(jnp.array(reward_seq))
@@ -77,7 +92,7 @@ def main():
     # visualize episode
     if args.render:
         file_path = os.path.join(
-            get_algorithm_dir_path(ENV_NAME, ALGORITHM_NAME),
+            get_algorithm_dir_path(algorithm.ENV_NAME, args.algorithm_name),
             f"trained_policy_seed{args.seed}.gif",
         )
         viewer = FrozenLakeViewer("Frozen Lake")

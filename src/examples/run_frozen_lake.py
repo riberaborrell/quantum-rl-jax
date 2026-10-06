@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from frozenlake.env import FrozenLake
 from frozenlake.viewer import FrozenLakeViewer
 
-from utils.path import get_env_dir_path
+from utils.path import get_algorithm_dir_path
 
 @dataclass
 class Args:
@@ -76,7 +76,8 @@ def main():
     # visualize episode
     if args.render:
         file_path = os.path.join(
-            get_env_dir_path("FrozenLake"), f"random_policy_seed{args.seed}.gif"
+            get_algorithm_dir_path("FrozenLake", "random"),
+            f"random_policy_seed{args.seed}.gif",
         )
         viewer = FrozenLakeViewer("Frozen Lake")
         viewer.animate(state_seq, interval=200, save_path=file_path)

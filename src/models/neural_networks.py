@@ -14,7 +14,7 @@ class QNetwork(nn.Module):
     """
 
     action_dim: int
-    hidden_dims: Sequence[int] = (120, 84)
+    hidden_dims: Sequence[int] = (32, 16)
     activation: Callable[[Array], Array] = nn.relu
 
     @nn.compact

@@ -1,10 +1,8 @@
 # DQN for the jumanji Frozenlake environment, adapted from dqn.py (gymnax version)
-import sys
 import time
 from collections import deque
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Sequence
 
 import flax
 import jax
@@ -41,7 +39,7 @@ class Args:
     # neural network architecture and optimizer
     hidden_dims: Sequence[int] = (32, 16)
     """the dimensions of the hidden layers"""
-    optimizer: Literal["sgd", "adam", "rmsprop"] = "adam"
+    optimizer: Literal["sgd", "adam"] = "adam"
     """the optimizer of the neural network parameters"""
     learning_rate: float = 5e-4
     """the learning rate of the chosen optimizer"""
@@ -49,7 +47,7 @@ class Args:
     """if set, the maximum global norm of the gradients; larger gradients are rescaled to this norm"""
 
     # dqn parameters
-    total_timesteps: int | None = 20000
+    total_timesteps: int | None = 25000
     """total timesteps of the experiments"""
     max_episodes: int | None = 1000
     """if set, stop training after this number of episodes (in addition to `total_timesteps`)"""
@@ -75,7 +73,7 @@ class Args:
     """the starting epsilon for exploration"""
     end_e: float = 0.01
     """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.5
+    exploration_fraction: float = 0.25
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
     epsilon_schedule: Literal["constant", "linear", "exponential"] = "linear"
     """"linear" and "exponential": epsilon decays from `start_e` to `end_e` over the first
