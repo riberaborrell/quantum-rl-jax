@@ -1,10 +1,10 @@
-# Reinforcement Learning & Variational Quantum Circuits
+# QuantumRLJax (Quantum Reinforcement Learning in JAX)
 
 ## Contains
 
 Reinforcement learning algorithms that use variational quantum circuits (VQCs) as function approximators.
 
-- DQN in JAX, following [CleanRL](https://github.com/vwxyzjn/cleanrl) and [PureJaxRL](https://github.com/luchris429/purejaxrl). The q-value function is either a neural network (Flax) or a VQC (PennyLane).
+- DQN in JAX, following [CleanRL](https://github.com/vwxyzjn/cleanrl) and [PureJaxRL](https://github.com/luchris429/purejaxrl). The q-value function is either a neural network (Flax) or a VQC (PennyLane), following [VQC-DRL](https://github.com/ycchen1989/Var-QuantumCircuits-DeepRL).
 - Training scripts for gymnax environments and for the Frozenlake environment (see below for details).
 
 ### Examples
@@ -46,12 +46,12 @@ Parameters shared by both:
 
 1. clone the repo
 ```bash
-git clone git@github.com:riberaborrell/rl-with-vqc.git
+git clone git@github.com:riberaborrell/quantum-rl-jax.git
 ```
 
 2. move inside the directory, create virtual environment and install required packages
 ```bash
-cd rl-with-vqc
+cd quantum-rl-jax
 make venv
 ```
 

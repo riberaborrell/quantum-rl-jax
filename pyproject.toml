@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rl-with-vqc"
+name = "quantum-rl-jax"
 version = "0.0.1"
 description = "Reinforcement learning algorithms with variational quantum circuits"
 readme = "README.md"
@@ -29,8 +29,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/riberaborrell/rl-with-vqc"
-"Bug Tracker" = "https://github.com/riberaborrell/rl-with-vqc/issues"
+Homepage = "https://github.com/riberaborrell/quantum-rl-jax"
+"Bug Tracker" = "https://github.com/riberaborrell/quantum-rl-jax/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]
